@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>전시대 근무 자동 배정 시스템</title>
+    <title>전시대 자동 배정 시스템</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -30,7 +30,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // Lucide Icon Wrapper Component (toSvg 에러 픽스 적용)
+        // Lucide Icon Wrapper Component
         const Icon = ({ name, size = 20, className = "" }) => {
             const spanRef = useRef(null);
 
@@ -38,7 +38,6 @@
                 if (spanRef.current && window.lucide && window.lucide.icons[name]) {
                     const iconNode = window.lucide.icons[name];
                     
-                    // 최신 Lucide API (createElement)를 사용하는 방식
                     if (window.lucide.createElement) {
                         const svgElement = window.lucide.createElement(iconNode);
                         svgElement.setAttribute('width', size);
@@ -50,7 +49,6 @@
                         spanRef.current.innerHTML = '';
                         spanRef.current.appendChild(svgElement);
                     } else {
-                        // createElement가 없는 경우를 위한 Fallback (직접 파싱)
                         const toSvgString = (node) => {
                             if (!Array.isArray(node)) return '';
                             const [tag, attrs, children] = node;
@@ -104,12 +102,11 @@
                 startTime: '16:00',
                 endTime: '18:00'
             });
-            const [attendees, setAttendees] = useState(['바울', '베드로', '바나바', '빌립', '디모데']);
+            const [attendees, setAttendees] = useState(['김철수', '이영희', '박상호', '김유연', '이연아']);
             const [newAttendee, setNewAttendee] = useState('');
             const [schedule, setSchedule] = useState([]);
             const [editingCell, setEditingCell] = useState(null);
 
-            // Handler: Add Attendee
             const handleAddAttendee = (e) => {
                 e.preventDefault();
                 const trimmed = newAttendee.trim();
@@ -126,12 +123,11 @@
                 setNewAttendee('');
             };
 
-            // Handler: Remove Attendee
             const handleRemoveAttendee = (index) => {
                 setAttendees(attendees.filter((_, i) => i !== index));
             };
 
-            // 핵심: 자동 배정 알고리즘
+            // 핵심: 자동 배정 알고리즘 (고도화됨)
             const generateSchedule = () => {
                 const { boothCount, shiftDuration, startTime, endTime } = settings;
                 const startMins = timeToMins(startTime);
@@ -143,7 +139,7 @@
                 }
                 
                 const totalSlots = Math.ceil((endMins - startMins) / 10);
-                const shiftSlots = shiftDuration / 10; // 예: 20분 -> 2슬롯
+                const shiftSlots = shiftDuration / 10; 
 
                 if (attendees.length < boothCount * 2) {
                     alert(`현재 설정(전시대 ${boothCount}개)을 운영하려면 최소 ${boothCount * 2}명의 참석자가 필요합니다.`);
@@ -151,9 +147,16 @@
                 }
 
                 let newSchedule = [];
-                // 누적 근무 시간 트래킹 (슬롯 단위)
+                
+                // 누적 근무 시간 트래킹
                 let workCounts = {};
-                attendees.forEach(a => workCounts[a] = 0);
+                // [NEW] 마지막 근무 종료 시점 (슬롯 인덱스) 트래킹
+                let lastWorkedEndSlot = {}; 
+                
+                attendees.forEach(a => {
+                    workCounts[a] = 0;
+                    lastWorkedEndSlot[a] = -1; // -1은 아직 한 번도 투입되지 않음을 의미 (가장 먼저 투입될 대상)
+                });
 
                 // 현재 전시대별 할당 상태 추적
                 let currentState = Array.from({ length: boothCount }, () => ({
@@ -187,9 +190,22 @@
                                 // 현재 근무중이 아닌 인원 필터링
                                 let available = attendees.filter(a => !busyPersons.has(a));
                                 
-                                // 정렬: 1순위(누적 근무시간 적은 순), 2순위(무작위 - 특정 인원 쏠림 방지)
+                                // [NEW LOGIC] 정렬 알고리즘 고도화
                                 available.sort((a, b) => {
-                                    if (workCounts[a] !== workCounts[b]) return workCounts[a] - workCounts[b];
+                                    const endA = lastWorkedEndSlot[a];
+                                    const endB = lastWorkedEndSlot[b];
+                                    
+                                    // 1순위: 가장 오랫동안 쉰 사람 (마지막 근무 종료 시점이 과거일수록 작은 값)
+                                    if (endA !== endB) {
+                                        return endA - endB; 
+                                    }
+                                    
+                                    // 2순위: 휴식 텀이 같다면, 누적 근무 시간이 적은 사람
+                                    if (workCounts[a] !== workCounts[b]) {
+                                        return workCounts[a] - workCounts[b];
+                                    }
+                                    
+                                    // 3순위: 무작위 (쏠림 방지)
                                     return Math.random() - 0.5;
                                 });
 
@@ -202,10 +218,12 @@
                                     let duration = shiftSlots;
                                     if (s === 0 && role === 'B') {
                                         duration = Math.max(1, shiftSlots - 1); 
-                                        // 20분(2슬롯) -> B는 1슬롯만 진행
-                                        // 30분(3슬롯) -> B는 2슬롯만 진행
                                     }
+                                    
                                     currentState[b][role].remainingSlots = duration;
+                                    // [NEW] 해당 인원이 이번 근무를 언제 마치는지를 미래 시점(s + duration)으로 기록
+                                    lastWorkedEndSlot[selected] = s + duration;
+                                    
                                     busyPersons.add(selected);
                                 } else {
                                     currentState[b][role].name = "미배정";
@@ -225,7 +243,6 @@
                 setEditingCell(null);
             };
 
-            // Handler: Manual Cell Edit
             const handleCellEdit = (sIndex, bIndex, role, newValue) => {
                 const updatedSchedule = [...schedule];
                 updatedSchedule[sIndex].booths[bIndex][role] = newValue;
@@ -233,7 +250,6 @@
                 setEditingCell(null);
             };
 
-            // 수동 편집 시 중복 투입을 막기 위해 현재 시간대(슬롯)에 선택 가능한 옵션 필터링
             const getAvailableOptions = (sIndex, bIndex, currentRole) => {
                 const currentSlot = schedule[sIndex];
                 const busy = new Set();
@@ -249,7 +265,6 @@
                 return attendees.filter(a => !busy.has(a) || a === currentSlot.booths[bIndex][currentRole]);
             };
 
-            // 요약 데이터 계산 (항상 현재 스케줄 상태를 기준으로 동적 계산)
             const summaryData = useMemo(() => {
                 if (schedule.length === 0) return [];
                 let counts = {};
@@ -264,7 +279,7 @@
 
                 return Object.entries(counts)
                     .map(([name, mins]) => ({ name, mins }))
-                    .sort((a, b) => b.mins - a.mins); // 근무시간 많은 순 정렬
+                    .sort((a, b) => b.mins - a.mins); 
             }, [schedule, attendees]);
 
             return (
